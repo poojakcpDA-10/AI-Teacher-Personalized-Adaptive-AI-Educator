@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+backend/venv/
+backend/.venv/
+backend/data/ai_teacher.db
+backend/data/uploads/*
+backend/data/chroma/*
+backend/data/audio/*
+backend/data/video/*
+!backend/data/uploads/.gitkeep
+!backend/data/chroma/.gitkeep
+!backend/data/audio/.gitkeep
+!backend/data/video/.gitkeep
+backend/.env
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# OS
+.DS_Store
