@@ -1,318 +1,1433 @@
-# AI Teacher
+# 🤖 AI Teacher — Your Personal AI Educator
 
-A full-stack, adaptive AI teaching platform: upload learning material or name a
-topic, get a personalized structured lesson, taught through an AI-narrated
-video with subject-aware visuals, that asks questions, detects
-misconceptions, adapts on the fly, and produces a scored learning report.
+> ### Don't just give students answers. Give them a teacher.
 
-```
-ai-teacher/
-├── backend/     FastAPI + SQLAlchemy + ChromaDB (RAG) + LLM orchestration
-├── frontend/    React (Vite) app — light, learner-friendly UI
-└── docker-compose.yml
-```
+**AI Teacher** is an intelligent, adaptive education platform that transforms **PDFs, textbooks, notes, presentations, research papers, or any topic** into a personalized and interactive learning experience.
+
+Unlike a conventional chatbot, AI Teacher follows a human-like teaching cycle:
+
+**Understand → Plan → Explain → Demonstrate → Question → Evaluate → Adapt → Continue**
 
 ---
 
-## 1. What's actually running out of the box vs. what needs setup
+# 📌 Table of Contents
 
-This matters, so it's worth being precise about it up front.
-
-**Works immediately, no downloads or GPU required:**
-- Full backend API, database, lesson planning, teaching loop, RAG pipeline
-- Document upload & retrieval (PDF/DOCX/PPTX/TXT) — uses a lightweight,
-  offline embedding function, no model download needed
-- Question generation, answer evaluation, misconception detection,
-  subject-aware visual selection and rendering (Matplotlib/Pillow)
-- Video assembly pipeline (avatar placeholder + visuals + captions, via
-  MoviePy/FFmpeg) and offline TTS (`pyttsx3`)
-- The full React frontend
-
-**Needs one piece of setup for real (non-placeholder) answers:**
-- An LLM. Without one, the backend runs in `mock` mode: it returns
-  clearly-labeled placeholder text so you can see the whole system work
-  end-to-end, but the "teaching" isn't real. Point it at Ollama + Qwen 3
-  (free, local, private — see §3) or any OpenAI-compatible API in 5 minutes.
-
-**Needs additional infrastructure for production-grade video/voice:**
-- A human-like **lip-synced avatar** (SadTalker/Wav2Lip) needs a GPU and
-  several GB of model weights that cannot be bundled in this repo.
-- **Expressive, multilingual TTS** (Piper/XTTS-v2) similarly needs a local
-  model server.
-- The app ships with clean adapter interfaces for both (see
-  `backend/app/services/avatar_service.py` and `tts_service.py`) and a
-  working, no-GPU placeholder (a simple animated avatar card with captions
-  and OS-level TTS) so the product is fully demoable today. §5 below is a
-  step-by-step guide to swapping in the real thing.
-
-None of this is hidden behind extra flags — `backend/.env` has one setting
-per component (`LLM_PROVIDER`, `TTS_PROVIDER`, `AVATAR_PROVIDER`) and the
-code path for each is a single, documented file.
-
----
-
-## 2. Quick start (Docker)
-
-```bash
-cp backend/.env.example backend/.env
-docker compose up --build
-```
-
-- Frontend: http://localhost:5173
-- Backend API docs: http://localhost:8000/docs
-
-By default `docker-compose.yml` also starts an `ollama` container. After
-first boot, pull the model once:
-
-```bash
-docker compose exec ollama ollama pull qwen3:8b
-```
-
-Until you do that, `backend/.env`'s `LLM_PROVIDER=mock` setting (or Ollama
-simply being unreachable) makes the backend fall back to labeled mock
-responses automatically — nothing crashes, you just see placeholder text.
-
-If you don't want to run Ollama in Docker at all, delete the `ollama`
-service and its `depends_on` line from `docker-compose.yml` and either run
-Ollama on your host machine, or set `LLM_PROVIDER=openai_compatible` and
-point at a hosted API (see §3.2).
+- [Overview](#-overview)
+- [Problem Statement](#-problem-statement)
+- [The Gap in Existing Learning](#-the-gap-in-existing-learning)
+- [Our Solution](#-our-solution)
+- [Key Features](#-key-features)
+- [How It Works](#-how-it-works)
+- [System Architecture](#-system-architecture)
+- [AI Architecture](#-ai-architecture)
+- [Adaptive Teaching Loop](#-adaptive-teaching-loop)
+- [Personalization](#-personalization)
+- [RAG Knowledge Grounding](#-rag-knowledge-grounding)
+- [AI Teaching Video](#-ai-teaching-video)
+- [Interactive Learning](#-interactive-learning)
+- [Assessment](#-assessment-and-feedback)
+- [Learning Profile](#-student-learning-profile)
+- [Real-World Examples](#-real-world-examples)
+- [Impact](#-impact)
+- [Project Gaps Reduced](#-project-gaps-reduced)
+- [What Makes AI Teacher Different](#-what-makes-ai-teacher-different)
+- [Innovation](#-innovation)
+- [Technology Stack](#-technology-stack)
+- [Project Structure](#-project-structure)
+- [Application Workflow](#-complete-application-workflow)
+- [Demo Flow](#-demo-flow)
+- [Future Scope](#-future-scope)
+- [Current Limitations](#-current-limitations)
+- [Installation](#-installation)
+- [Running the Project](#-running-the-project)
+- [Environment Configuration](#-environment-configuration)
+- [API](#-api)
+- [Security and Privacy](#-security-and-privacy)
+- [Use Cases](#-use-cases)
+- [Vision](#-vision)
+- [Conclusion](#-conclusion)
 
 ---
 
-## 3. Running locally without Docker
+# 🌟 Overview
 
-### Backend
+Education platforms have made learning content more accessible, but accessibility does not always mean understanding.
 
-```bash
-cd backend
-python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env
-uvicorn app.main:app --reload
-```
+Students have different:
 
-Requires **ffmpeg** on your PATH for video assembly
-(`apt install ffmpeg` / `brew install ffmpeg` / winget/choco on Windows).
-Without it, video generation degrades gracefully to text-only turns.
+- Learning levels
+- Background knowledge
+- Learning speeds
+- Languages
+- Goals
+- Available time
+- Learning difficulties
 
-### Frontend
+AI Teacher addresses this challenge by creating a **personalized AI educator** capable of understanding learning material, planning lessons, explaining concepts, interacting with students, evaluating responses, identifying knowledge gaps, and adapting future teaching.
 
-```bash
-cd frontend
-npm install
-cp .env.example .env
-npm run dev
-```
+The system can work with:
 
-Open http://localhost:5173.
-
-### 3.1 Connecting the recommended LLM: Qwen 3 via Ollama
-
-This matches the stack most naturally suited to this project — free,
-runs entirely on your machine, keeps student conversations private.
-
-1. Install Ollama: https://ollama.com/download
-2. Pull the model: `ollama pull qwen3:8b` (a `qwen3:4b` variant exists for
-   machines with less RAM/VRAM; a larger `qwen3:14b`/`qwen3:32b` if you have
-   the hardware and want stronger reasoning)
-3. In `backend/.env`:
-   ```
-   LLM_PROVIDER=ollama
-   OLLAMA_BASE_URL=http://localhost:11434
-   OLLAMA_MODEL=qwen3:8b
-   ```
-4. Restart the backend.
-
-**Hardware guide (rule of thumb):** `qwen3:4b` runs on most modern laptops
-with 8GB+ RAM (CPU-only, slower); `qwen3:8b` is comfortable with a 8GB+ GPU
-or 16GB+ RAM; larger variants want a dedicated 16GB+ GPU for good latency.
-
-### 3.2 Alternative: a hosted OpenAI-compatible API
-
-If you don't have a GPU and want low-latency responses without local
-inference, point at any OpenAI-chat-compatible endpoint (Groq, Together,
-OpenRouter, Fireworks, self-hosted vLLM, LM Studio's local server, etc.):
-
-```
-LLM_PROVIDER=openai_compatible
-OPENAI_COMPATIBLE_BASE_URL=https://api.groq.com/openai/v1
-OPENAI_COMPATIBLE_API_KEY=sk-...
-OPENAI_COMPATIBLE_MODEL=qwen/qwen3-32b
-```
+- 📚 Books
+- 📄 PDF documents
+- 📝 Notes
+- 📊 PPT/PPTX presentations
+- 📃 DOC/DOCX files
+- 🔬 Research papers
+- 🎓 Course material
+- 💬 Direct user-provided topics
 
 ---
 
-## 4. Environment variables (`backend/.env`)
+# 🎯 Problem Statement
 
-| Variable | Default | Notes |
-|---|---|---|
-| `LLM_PROVIDER` | `mock` | `ollama` \| `openai_compatible` \| `mock` |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | |
-| `OLLAMA_MODEL` | `qwen3:8b` | |
-| `OPENAI_COMPATIBLE_BASE_URL` / `_API_KEY` / `_MODEL` | empty | for hosted LLM APIs |
-| `DATABASE_URL` | local SQLite file | swap for `postgresql://...` in production (see §6) |
-| `CHROMA_DIR` | `./data/chroma` | vector store location |
-| `TTS_PROVIDER` | `pyttsx3` | `pyttsx3` (offline dev) \| `piper` \| `xtts` |
-| `AVATAR_PROVIDER` | `static` | `static` (dev placeholder) \| `sadtalker` \| `wav2lip` |
-| `CORS_ORIGINS` | `localhost:5173` | add your deployed frontend origin |
-| `MAX_UPLOAD_MB` | `50` | |
+Traditional digital learning systems generally depend on:
 
-Full list with defaults: `backend/app/config.py`.
+- Pre-recorded lectures
+- Static documents
+- Generic learning paths
+- Text-based AI assistants
+- One-size-fits-all explanations
 
----
+These systems often fail to answer important questions:
 
-## 5. Production upgrades: real avatar + voice
+> What does this student already know?
 
-The app is architected so these are drop-in swaps — one function each,
-same input/output contract, nothing else in the codebase changes.
+> Which concept is the student struggling with?
 
-### 5.1 Lip-synced avatar (SadTalker or Wav2Lip)
+> Should the explanation be simplified?
 
-Both require a CUDA GPU (8GB+ VRAM recommended) and are not pip-installable
-as simple libraries — you run their inference scripts as a local service.
+> Does the student actually understand the concept?
 
-1. Clone and set up either project's inference environment:
-   - SadTalker: https://github.com/OpenTalker/SadTalker
-   - Wav2Lip: https://github.com/Rudrabha/Wav2Lip
-2. Download their pretrained checkpoints (instructions in their repos).
-3. Implement `_sadtalker_generate()` / `_wav2lip_generate()` in
-   `backend/app/services/avatar_service.py` — the stub already shows the
-   expected call shape (`subprocess.run([...])` against their inference
-   script, given an audio file + your avatar source image, producing an
-   mp4).
-4. Set `AVATAR_PROVIDER=sadtalker` (or `wav2lip`) and
-   `AVATAR_IMAGE_PATH=/path/to/your/avatar.png` in `.env`.
+> What should the student learn next?
 
-### 5.2 Expressive multilingual TTS (Piper or Coqui XTTS-v2)
+> How much content can be covered in the available time?
 
-1. Piper (lightweight, many languages, CPU-friendly):
-   https://github.com/rhasspy/piper — download a voice model per language.
-2. XTTS-v2 (higher quality, voice cloning, heavier):
-   https://github.com/coqui-ai/TTS — run as a local server.
-3. Implement `_synthesize_piper()` / `_synthesize_xtts()` in
-   `backend/app/services/tts_service.py`.
-4. Set `TTS_PROVIDER=piper` (or `xtts`) in `.env`.
+> Which language and teaching style work best for this learner?
 
-### 5.3 Stronger multilingual embeddings for RAG
+This creates a major gap between:
 
-The bundled embedding function (`backend/app/services/embeddings.py`) is a
-deterministic, offline hashing scheme chosen so RAG works with zero
-downloads on any machine, including fully offline ones. For meaningfully
-better multilingual semantic retrieval (recommended for production):
+**Content Delivery → Actual Understanding**
 
-```python
-from sentence_transformers import SentenceTransformer
-class BGEEmbeddingFunction:
-    def __init__(self):
-        self.model = SentenceTransformer("BAAI/bge-m3")
-    def __call__(self, input):
-        return self.model.encode(list(input), normalize_embeddings=True).tolist()
-```
-
-Swap this in for `HashingEmbeddingFunction()` in `rag_service.py`
-(`pip install sentence-transformers`; first run downloads the model from
-Hugging Face, so you'll need outbound internet access at least once).
-
-### 5.4 Speech-to-text for spoken student input
-
-Not wired up yet. Add a `whisper` branch: `pip install openai-whisper` (or
-`faster-whisper` for speed) and a new endpoint that accepts an audio
-upload, transcribes it, and forwards the text into the existing
-`POST /api/sessions/answer` / `POST /api/sessions/chat` flow — no change
-needed downstream since both already just take text.
-
-### 5.5 Real math/physics animation (Manim)
-
-`visual_service.py`'s `render_graph`/`render_force_diagram` use
-Matplotlib for speed and zero extra dependencies. For animated (not just
-static) explanations, `pip install manim` and add a renderer that shells
-out to a Manim scene script, writing an mp4 instead of a png — the
-`RENDERERS` dict in that file is the only place that needs a new entry.
+AI Teacher is designed to close this gap.
 
 ---
 
-## 6. Taking this to production
+# 🚨 The Gap in Existing Learning
 
-- **Database:** switch `DATABASE_URL` to PostgreSQL for concurrent users
-  (`postgresql://user:pass@host/db`); the SQLAlchemy models don't change.
-- **Auth:** there's no login system yet — `LessonRequest`/`StudentCreate`
-  trust the caller. Add real auth (e.g. an OAuth provider or your own
-  JWT layer using the already-installed `python-jose`/`passlib`) before
-  exposing this beyond a local demo.
-- **File storage:** uploads and generated video/audio currently live on
-  local disk (`backend/data/`). For multi-instance deployments, move these
-  to object storage (S3-compatible) and store URLs instead of local paths.
-- **Background jobs:** document ingestion uses FastAPI `BackgroundTasks`,
-  which runs in-process. For heavier load, move to a real task queue
-  (Celery/RQ + Redis) so a slow PDF or a video render doesn't block the
-  API worker.
-- **Secrets:** set a real `SECRET_KEY`, and put API keys in your
-  deployment platform's secret manager, not in a committed `.env`.
-- **CORS:** set `CORS_ORIGINS` to your actual deployed frontend domain.
-
----
-
-## 7. Architecture notes
-
-**Teaching loop.** `backend/app/agents/teacher_controller.py` is the single
-place that drives a live session:
-`Explain → (visual + video) → Question → Evaluate → Misconception detect →
-Adapt → Continue`, walking through the structured lesson plan one section
-at a time and tracking a small piece of state (pending question, running
-Q&A log) directly on the `TeachingSession` row.
-
-**Lesson planning is time-shaped, not just topic-shaped.**
-`backend/app/agents/lesson_planner.py` produces structurally different
-plans for 5-minute / 20-minute / 60-minute / multi-day requests — this was
-a specific, non-negotiable requirement, not left to prompt luck.
-
-**RAG is per-student.** Each student gets their own Chroma collection, so
-retrieval never crosses between learners, and a lesson can be explicitly
-grounded in one uploaded document (`document_id`) or search across
-everything they've uploaded.
-
-**Score is computed, not asked of the LLM.** `progress_service.py`
-computes the assessment percentage from the actual correct/incorrect
-record; the LLM only writes the qualitative summary (strong/weak areas,
-misconceptions, recommended revision) — matching the explicit guidance
-against trusting an LLM to grade itself.
-
-**Everything degrades gracefully.** No LLM reachable → mock responses. No
-ffmpeg/TTS/avatar backend reachable → the lesson still proceeds as text
-with whatever media *did* render. This was a deliberate choice so a
-missing piece of infrastructure never breaks the teaching loop.
-
----
-
-## 8. API reference
-
-Full interactive docs (request/response schemas, "try it out") are
-auto-generated at **http://localhost:8000/docs** once the backend is
-running. Key endpoints:
-
-| Endpoint | Purpose |
+| Existing Approach | Limitation |
 |---|---|
-| `POST /api/students` | create a learner profile |
-| `POST /api/documents/upload` | upload & ingest a textbook/notes/slides |
-| `POST /api/lessons` | generate a structured lesson plan |
-| `POST /api/lessons/learning-path` | generate a broad-topic learning path |
-| `POST /api/sessions/start` | begin a live teaching session for a lesson |
-| `POST /api/sessions/{id}/next` | advance to the next teaching turn |
-| `POST /api/sessions/answer` | submit the student's answer to a pending question |
-| `POST /api/sessions/chat` | grounded follow-up Q&A mid-lesson |
-| `GET /api/sessions/{id}/assessment` | final scored learning report |
-| `GET /api/students/{id}/profile` | mastered/weak concepts, learning path |
+| 📺 Pre-recorded videos | Same explanation for everyone |
+| 📄 Static PDFs | No interaction |
+| 🤖 Generic chatbot | Answers questions but does not necessarily teach |
+| 📝 Online quizzes | Limited adaptive feedback |
+| 🌐 Generic courses | Fixed learning path |
+| 🔊 Text-to-speech | Voice without true teaching adaptation |
+| 📚 Search-based learning | Student must find relevant information |
+| 👨‍🏫 Traditional tutoring | Personalized but difficult to scale |
+
+### AI Teacher combines these capabilities into one adaptive learning system.
 
 ---
 
-## 9. Known limitations
+# 💡 Our Solution
 
-- Avatar is a static placeholder card, not a lip-synced human, until you
-  wire up SadTalker/Wav2Lip (§5.1).
-- TTS uses the OS speech engine by default — functional but robotic;
-  swap in Piper/XTTS for natural, expressive, multilingual voices (§5.2).
-- RAG retrieval quality is good-not-great out of the box (offline hashing
-  embeddings); swap in BGE-M3 for real semantic multilingual retrieval (§5.3).
-- No speech-to-text yet — students type answers rather than speak them (§5.4).
-- No authentication — intended for local/trusted deployment as shipped.
-- Single-server design; see §6 before scaling to concurrent multi-user load.
+AI Teacher acts as a **personal AI educator**.
+
+The student provides:
+
+```text
+Topic / PDF / PPT / Notes / Textbook
+
+The system then:
+
+Understand Material
+        ↓
+Understand Learner
+        ↓
+Retrieve Relevant Knowledge
+        ↓
+Create Lesson Plan
+        ↓
+Explain Concepts
+        ↓
+Demonstrate with Examples
+        ↓
+Ask Questions
+        ↓
+Evaluate Student
+        ↓
+Detect Knowledge Gaps
+        ↓
+Adapt Teaching
+        ↓
+Assess Learning
+        ↓
+Recommend Next Step
+
+The result is not simply an AI-generated answer.
+
+It is an AI-powered teaching experience.
+
+🚀 Key Features
+🧠 1. AI Lesson Planning
+
+AI Teacher automatically converts a topic or uploaded learning material into a structured lesson.
+
+Example:
+
+Topic:
+Python Variables
+
+Student Level:
+Beginner
+
+Language:
+English
+
+Available Time:
+20 Minutes
+
+Learning Goal:
+Understand Python variables
+
+The system generates a structured lesson according to these requirements.
+
+📚 2. Document-Based Learning
+
+AI Teacher can process educational materials such as:
+
+PDF
+DOC
+DOCX
+PPT
+PPTX
+Textbooks
+Notes
+Research papers
+Course material
+
+The system extracts relevant information and makes it available to the AI teaching pipeline.
+
+💬 3. Topic-Based Learning
+
+Students do not always need to upload a document.
+
+They can directly ask:
+
+Teach me Artificial Intelligence from the beginning.
+
+or:
+
+Explain Newton's Laws to a Class 8 student.
+
+or:
+
+Teach me React for a technical interview.
+
+The AI creates a suitable learning structure based on the request.
+
+🔎 4. RAG-Based Knowledge Grounding
+
+AI Teacher uses Retrieval-Augmented Generation (RAG) to ground teaching responses in uploaded learning materials.
+
+RAG Pipeline
+             Uploaded Document
+                     ↓
+              Text Extraction
+                     ↓
+                 Chunking
+                     ↓
+                Embeddings
+                     ↓
+              Vector Database
+                     ↓
+             Semantic Retrieval
+                     ↓
+             Relevant Context
+                     ↓
+                    LLM
+                     ↓
+            Grounded Response
+
+This helps reduce unsupported or hallucinated information when answering questions related to uploaded material.
+
+👨‍🏫 5. Human-Like Teaching
+
+AI Teacher follows a teaching process similar to a human educator:
+
+UNDERSTAND
+     ↓
+PLAN
+     ↓
+EXPLAIN
+     ↓
+DEMONSTRATE
+     ↓
+QUESTION
+     ↓
+EVALUATE
+     ↓
+ADAPT
+     ↓
+CONTINUE
+
+The system is designed to move beyond a basic chatbot experience.
+
+🧩 6. Misconception Detection
+
+Consider this example.
+
+Teacher:
+What happens to current if resistance increases
+while voltage remains constant?
+Student:
+Current increases.
+
+A traditional system might simply respond:
+
+❌ Incorrect
+
+AI Teacher instead attempts to identify the underlying misconception.
+
+Wrong Answer
+     ↓
+Detect Misconception
+     ↓
+Re-explain Concept
+     ↓
+Use Different Analogy
+     ↓
+Give New Example
+     ↓
+Ask Another Question
+     ↓
+Evaluate Again
+
+This creates a real adaptive teaching loop.
+
+🎯 7. Personalized Teaching
+
+AI Teacher adapts according to:
+
+Educational Level
+Existing Knowledge
+Learning Goal
+Preferred Language
+Teaching Style
+Available Time
+Desired Depth
+Beginner
+Simple terminology
++
+Analogies
++
+Fundamental concepts
++
+Basic examples
+Intermediate
+Technical explanations
++
+Practical examples
++
+Application
+Advanced
+Technical terminology
++
+Mathematics
++
+Implementation details
++
+Advanced examples
+⏱️ 8. Time-Aware Learning
+
+Students can specify how much time they have.
+
+5 Minutes
+Most important concepts
++
+Quick explanation
+20 Minutes
+Structured lesson
++
+Examples
++
+Questions
+60 Minutes
+Deep explanation
++
+Examples
++
+Questions
++
+Assessment
+7 Days
+Personalized learning plan
++
+Revision
++
+Progress tracking
+
+The lesson structure changes according to the available time.
+
+🌐 9. Multilingual Teaching
+
+Students can choose their preferred language.
+
+Examples:
+
+Explain this topic in Hindi.
+Now explain it in English.
+Mujhe ye Hinglish mein simple example ke saath samjhao.
+
+The system is designed to maintain lesson context when the teaching language changes.
+
+🎥 10. AI Teaching Video
+
+AI Teacher presents lessons through an engaging video-based experience.
+
+The teaching experience can combine:
+
+👤 AI Avatar
+🔊 Natural Voice
+📝 On-screen Text
+📊 Diagrams
+🖼️ Images
+📐 Mathematical explanations
+💻 Code demonstrations
+📈 Graphs
+🔬 Subject-specific visuals
+
+The objective is to create the experience of attending a personalized AI-powered class.
+
+💬 11. Interactive Learning
+
+AI Teacher does not continuously deliver a monologue.
+
+It can periodically ask:
+
+Conceptual questions
+MCQs
+Short-answer questions
+Problem-solving questions
+Application-based questions
+"Explain in your own words" questions
+
+Student responses influence subsequent teaching.
+
+📊 12. Assessment and Feedback
+
+At the end of a lesson, AI Teacher can generate:
+
+Quiz questions
+MCQs
+Conceptual questions
+Practical problems
+Short-answer questions
+Learning Report
+Score
+  ↓
+Concepts Understood
+  ↓
+Strong Areas
+  ↓
+Weak Areas
+  ↓
+Incorrect Concepts
+  ↓
+Recommended Revision
+  ↓
+Suggested Next Topic
+
+Example:
+
+Topic: Electricity
+
+Score: 80%
+
+Strong Areas:
+✓ Current
+✓ Voltage
+
+Needs Improvement:
+⚠ Resistance
+⚠ Ohm's Law
+
+Recommendation:
+Revise Ohm's Law
+and complete additional practice.
+📈 Student Learning Profile
+
+AI Teacher can maintain a learner profile containing:
+
+Topics Studied
+Learning Progress
+Assessment Scores
+Strong Concepts
+Weak Concepts
+Learning History
+Current Learning Path
+
+This information can be used to personalize future teaching sessions.
+
+🗺️ AI-Generated Learning Path
+
+For broad topics, AI Teacher can create a structured learning path.
+
+Example:
+
+Machine Learning
+       ↓
+Python Fundamentals
+       ↓
+Mathematics for ML
+       ↓
+Data Processing
+       ↓
+Supervised Learning
+       ↓
+Unsupervised Learning
+       ↓
+Model Evaluation
+       ↓
+Neural Networks
+       ↓
+Advanced Machine Learning
+
+The student can progress through the path based on their performance.
+
+🌍 Real-World Examples
+👩‍🎓 Example 1 — School Education
+Student Request
+I am a Class 8 student.
+Teach me Newton's Laws in simple Hindi.
+I have 20 minutes.
+AI Teacher
+Understand Student Level
+        ↓
+Create 20-Minute Lesson
+        ↓
+Use Simple Language
+        ↓
+Use Real-World Examples
+        ↓
+Ask Questions
+        ↓
+Evaluate Answers
+        ↓
+Re-explain Difficult Concepts
+👨‍💻 Example 2 — Engineering Education
+Student Request
+Teach me Machine Learning from the beginning.
+I am a beginner.
+AI Teacher
+Python
+  ↓
+Mathematics
+  ↓
+Data Processing
+  ↓
+Supervised Learning
+  ↓
+Unsupervised Learning
+  ↓
+Model Evaluation
+  ↓
+Neural Networks
+💼 Example 3 — Technical Interview Preparation
+Student Request
+Teach me React for a technical interview.
+I have 30 minutes.
+AI Teacher
+Core Concepts
+     ↓
+Important Interview Topics
+     ↓
+Practical Examples
+     ↓
+Questions
+     ↓
+Evaluation
+     ↓
+Weak Areas
+     ↓
+Revision
+🌐 Example 4 — Learning from a PDF
+Student
+Uploads:
+Machine Learning Textbook.pdf
+AI Teacher
+PDF
+ ↓
+Document Processing
+ ↓
+Relevant Chapter Detection
+ ↓
+RAG Retrieval
+ ↓
+Lesson Planning
+ ↓
+Teaching
+ ↓
+Questions
+ ↓
+Assessment
+ ↓
+Personalized Feedback
+🏗️ System Architecture
+                         ┌─────────────────────┐
+                         │       STUDENT       │
+                         └──────────┬──────────┘
+                                    │
+                    Topic / PDF / PPT / Notes
+                                    │
+                                    ▼
+                         ┌─────────────────────┐
+                         │    React Frontend   │
+                         └──────────┬──────────┘
+                                    │
+                                    ▼
+                         ┌─────────────────────┐
+                         │   FastAPI Backend   │
+                         └──────────┬──────────┘
+                                    │
+               ┌────────────────────┼────────────────────┐
+               │                    │                    │
+               ▼                    ▼                    ▼
+       ┌───────────────┐    ┌───────────────┐    ┌───────────────┐
+       │    Document   │    │      RAG      │    │    Student    │
+       │   Processing  │    │     Engine    │    │     Profile   │
+       └───────┬───────┘    └───────┬───────┘    └───────┬───────┘
+               │                    │                    │
+               └────────────────────┼────────────────────┘
+                                    │
+                                    ▼
+                         ┌─────────────────────┐
+                         │      Qwen3 LLM      │
+                         └──────────┬──────────┘
+                                    │
+                                    ▼
+                         ┌─────────────────────┐
+                         │   Lesson Planner    │
+                         └──────────┬──────────┘
+                                    │
+                                    ▼
+                         ┌─────────────────────┐
+                         │  AI Teacher Agent   │
+                         └──────────┬──────────┘
+                                    │
+                    ┌───────────────┼───────────────┐
+                    │               │               │
+                    ▼               ▼               ▼
+               Explanation      Questions       Visuals
+                    │               │               │
+                    └───────────────┼───────────────┘
+                                    │
+                                    ▼
+                         ┌─────────────────────┐
+                         │ Student Response    │
+                         └──────────┬──────────┘
+                                    │
+                                    ▼
+                         ┌─────────────────────┐
+                         │ Evaluation & Gap    │
+                         │      Detection      │
+                         └──────────┬──────────┘
+                                    │
+                                    ▼
+                         ┌─────────────────────┐
+                         │ Adaptive Teaching   │
+                         └──────────┬──────────┘
+                                    │
+                                    ▼
+                         ┌─────────────────────┐
+                         │ Assessment & Report │
+                         └─────────────────────┘
+🧠 AI Architecture
+                  USER INPUT
+                      │
+          ┌───────────┴───────────┐
+          │                       │
+       TOPIC                  DOCUMENT
+          │                       │
+          │                Text Extraction
+          │                       │
+          │                   Chunking
+          │                       │
+          │                  Embeddings
+          │                       │
+          │                  ChromaDB
+          │                       │
+          └───────────┬───────────┘
+                      │
+                      ▼
+               KNOWLEDGE LAYER
+                      │
+                      ▼
+                 RAG RETRIEVAL
+                      │
+                      ▼
+                 QWEN3 LLM
+                      │
+                      ▼
+              LESSON PLANNER
+                      │
+                      ▼
+             TEACHING CONTROLLER
+                      │
+       ┌──────────────┼──────────────┐
+       ▼              ▼              ▼
+    Explain        Question       Visualize
+       │              │              │
+       └──────────────┼──────────────┘
+                      ▼
+               STUDENT RESPONSE
+                      │
+                      ▼
+                  EVALUATOR
+                      │
+             ┌────────┴────────┐
+             │                 │
+          Correct            Wrong
+             │                 │
+             │                 ▼
+             │          MISCONCEPTION
+             │             DETECTION
+             │                 │
+             │                 ▼
+             │           RE-EXPLAIN
+             │                 │
+             └────────┬────────┘
+                      ▼
+                  REASSESS
+                      │
+                      ▼
+             LEARNING PROFILE
+                      │
+                      ▼
+             NEXT RECOMMENDATION
+🔄 Adaptive Teaching Loop
+
+This is the core intelligence of AI Teacher.
+
+             ┌───────────────┐
+             │     TEACH     │
+             └───────┬───────┘
+                     ↓
+             ┌───────────────┐
+             │      ASK      │
+             └───────┬───────┘
+                     ↓
+             ┌───────────────┐
+             │     ANSWER    │
+             └───────┬───────┘
+                     ↓
+             ┌───────────────┐
+             │    EVALUATE   │
+             └───────┬───────┘
+                     ↓
+             ┌───────────────┐
+             │ DETECT GAP?   │
+             └───────┬───────┘
+                     │
+             ┌───────┴───────┐
+             │               │
+            YES              NO
+             │               │
+             ▼               ▼
+       RE-EXPLAIN        CONTINUE
+             │               │
+             ▼               │
+       NEW EXAMPLE           │
+             │               │
+             ▼               │
+        NEW QUESTION         │
+             │               │
+             └───────┬───────┘
+                     ▼
+                 REASSESS
+                     │
+                     ▼
+             PERSONALIZE NEXT
+                   LESSON
+📉 Project Gaps Reduced
+1. Personalization Gap
+Before
+One Lesson
+    ↓
+Every Student
+With AI Teacher
+Student Profile
+    ↓
+Personalized Lesson
+2. Interaction Gap
+Before
+Watch Lecture
+    ↓
+Finish
+With AI Teacher
+Explain
+ ↓
+Question
+ ↓
+Student Response
+ ↓
+Feedback
+3. Knowledge Gap
+Before
+Wrong Answer
+ ↓
+Incorrect
+With AI Teacher
+Wrong Answer
+ ↓
+Misconception Detection
+ ↓
+Re-explanation
+ ↓
+New Example
+ ↓
+Reassessment
+4. Language Gap
+English
+Hindi
+Hinglish
+Other Supported Languages
+        ↓
+Personalized Teaching
+5. Time Gap
+5 min
+20 min
+60 min
+7 days
+ ↓
+Dynamic Learning Structure
+6. Feedback Gap
+Assessment
+    ↓
+Score
+    ↓
+Weak Areas
+    ↓
+Revision Recommendation
+7. Learning Continuity Gap
+Previous Learning
+       ↓
+Student Profile
+       ↓
+Current Progress
+       ↓
+Next Topic
+💥 What Makes AI Teacher Different?
+Capability	Traditional Platform	AI Teacher
+Static Content	✅	✅
+Topic Learning	Limited	✅
+Personalized Lessons	Limited	✅
+RAG Learning	Limited	✅
+Interactive Questions	Limited	✅
+Misconception Detection	❌	✅
+Adaptive Explanation	❌	✅
+Dynamic Difficulty	Limited	✅
+Multilingual Teaching	Limited	✅
+AI Voice	Limited	✅
+AI Avatar	Limited	✅
+Subject Visuals	Limited	✅
+Learning Profile	Limited	✅
+Personalized Feedback	Limited	✅
+Next Topic Recommendation	Limited	✅
+💎 Core Innovation
+
+The biggest innovation is not simply the AI avatar.
+
+The core innovation is the closed-loop adaptive teaching system.
+
+LEARN
+  ↓
+ASK
+  ↓
+ANSWER
+  ↓
+DETECT
+  ↓
+RE-TEACH
+  ↓
+REASSESS
+  ↓
+PERSONALIZE
+  ↓
+CONTINUE
+
+This changes the experience from:
+
+Question → Answer
+
+to:
+
+Understand → Teach → Interact → Diagnose → Adapt → Measure
+🌍 Potential Use Cases
+🎓 Schools
+
+Personalized explanations for different student levels.
+
+🏫 Colleges
+
+Engineering, science, mathematics and technical education.
+
+💻 Programming Education
+
+AI-generated explanations, code examples and execution concepts.
+
+🧑‍💼 Interview Preparation
+
+Personalized technical interview learning.
+
+📚 Competitive Exams
+
+Concept explanations, quizzes and revision.
+
+🌐 Multilingual Education
+
+Teaching concepts in regional and international languages.
+
+♿ Accessible Education
+
+Alternative explanations and personalized learning experiences.
+
+🏢 Corporate Learning
+
+Personalized employee training and skill development.
+
+📈 Impact
+
+AI Teacher aims to transform education from:
+
+CONTENT DELIVERY
+        ↓
+CONTENT UNDERSTANDING
+
+and:
+
+PASSIVE LEARNING
+        ↓
+INTERACTIVE LEARNING
+
+and:
+
+ONE-SIZE-FITS-ALL
+        ↓
+PERSONALIZED LEARNING
+
+and:
+
+WRONG ANSWER
+        ↓
+PERSONALIZED RE-TEACHING
+
+and:
+
+WHAT SHOULD I LEARN?
+        ↓
+AI-RECOMMENDED NEXT STEP
+Expected Impact
+Better personalization
+Increased interaction
+Faster identification of learning gaps
+More targeted revision
+Accessible multilingual learning
+Reduced dependence on fixed learning paths
+Scalable personalized education
+
+Note: These are intended product impacts; quantitative improvement percentages should only be claimed after controlled user testing.
+
+🎬 One-Minute Product Story
+0–6 sec
+PROBLEM
+
+Students have unlimited content,
+but not personalized teaching.
+
+
+6–13 sec
+GAP
+
+Static lectures and generic chatbots
+cannot understand every learner.
+
+
+13–20 sec
+SOLUTION
+
+AI Teacher transforms any topic
+or learning material into a personalized lesson.
+
+
+20–28 sec
+ARCHITECTURE
+
+Document Processing
++
+RAG
++
+LLM
++
+Lesson Planner
++
+Teaching Agent
+
+
+28–37 sec
+ADAPTIVE TEACHING
+
+Explain → Ask → Evaluate
+→ Detect Gap → Re-explain → Reassess
+
+
+37–44 sec
+PERSONALIZATION
+
+Level + Language + Goal + Time
+= Personalized Teaching
+
+
+44–50 sec
+AI VIDEO
+
+Avatar + Voice + Visuals
+create an engaging teaching experience.
+
+
+50–56 sec
+IMPACT
+
+Content → Understanding
+Passive → Interactive
+Generic → Personalized
+
+
+56–60 sec
+FINAL
+
+Don't just give students answers.
+
+Give them a teacher.
+🎥 Complete Demo Flow
+
+The complete product demonstration follows:
+
+UPLOAD / TOPIC
+      ↓
+STUDENT PROFILE
+      ↓
+LESSON PLANNING
+      ↓
+RAG RETRIEVAL
+      ↓
+AI TEACHING
+      ↓
+AI VIDEO
+      ↓
+QUESTION
+      ↓
+STUDENT RESPONSE
+      ↓
+EVALUATION
+      ↓
+MISCONCEPTION DETECTION
+      ↓
+ADAPTIVE RE-TEACHING
+      ↓
+FINAL ASSESSMENT
+      ↓
+LEARNING REPORT
+      ↓
+NEXT RECOMMENDATION
+🛠️ Technology Stack
+Frontend
+React
+JavaScript
+Modern Web UI
+Backend
+Python
+FastAPI
+SQLAlchemy
+AI / LLM
+Qwen3
+Large Language Models
+Prompt Engineering
+AI Orchestration
+Knowledge Retrieval
+RAG
+ChromaDB
+Vector Search
+Embeddings
+Semantic Retrieval
+Data
+SQL Database
+Vector Database
+AI Teaching
+Lesson Planning
+Adaptive Teaching
+Question Generation
+Assessment
+Knowledge Gap Detection
+Media
+AI Voice
+AI Avatar
+Educational Visuals
+Teaching Video Generation
+📁 Project Structure
+ai-teacher/
+│
+├── backend/
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── config.py
+│   │   ├── models/
+│   │   ├── routers/
+│   │   ├── services/
+│   │   └── ...
+│   │
+│   ├── .env
+│   └── requirements.txt
+│
+├── frontend/
+│   ├── src/
+│   ├── public/
+│   ├── package.json
+│   └── ...
+│
+├── README.md
+└── ...
+
+The exact structure may vary depending on the current project version.
+
+🔧 Installation
+1. Clone the Repository
+git clone <YOUR_GITHUB_REPOSITORY_URL>
+cd ai-teacher
+🐍 Backend Setup
+
+Navigate to the backend:
+
+cd backend
+
+Create a virtual environment:
+
+python -m venv venv
+
+Activate it on Windows:
+
+venv\Scripts\activate
+
+Install dependencies:
+
+pip install -r requirements.txt
+🤖 Ollama Setup
+
+Install Ollama and make sure the required model is available.
+
+Check installed models:
+
+ollama list
+
+The project is configured to use:
+
+qwen3:8b
+
+Pull the model if required:
+
+ollama pull qwen3:8b
+
+Start Ollama:
+
+ollama serve
+
+Test the model:
+
+ollama run qwen3:8b
+⚙️ Environment Configuration
+
+Create a .env file inside the backend directory.
+
+Example:
+
+LLM_PROVIDER=ollama
+
+OLLAMA_BASE_URL=http://localhost:11434
+
+OLLAMA_MODEL=qwen3:8b
+
+If using another supported LLM provider, configure the corresponding provider settings in the project configuration.
+
+Never commit API keys or private credentials to GitHub.
+
+▶️ Running the Backend
+
+Open a terminal:
+
+cd C:\Users\poojakc\ai-teacher\ai-teacher\backend
+
+Start FastAPI:
+
+python -m uvicorn app.main:app --reload
+
+The backend should be available at:
+
+http://127.0.0.1:8000
+
+Swagger API documentation:
+
+http://127.0.0.1:8000/docs
+▶️ Running the Frontend
+
+Open another terminal:
+
+cd C:\Users\poojakc\ai-teacher\ai-teacher\frontend
+
+Install dependencies:
+
+npm install
+
+Start the frontend:
+
+npm run dev
+
+Open the URL displayed by Vite.
+
+🖥️ Running the Complete System
+
+The local system may require three terminals.
+
+Terminal 1 — Ollama
+ollama serve
+Terminal 2 — Backend
+cd C:\Users\poojakc\ai-teacher\ai-teacher\backend
+
+python -m uvicorn app.main:app --reload
+Terminal 3 — Frontend
+cd C:\Users\poojakc\ai-teacher\ai-teacher\frontend
+
+npm run dev
+🔌 API
+
+The backend exposes API endpoints for major application operations.
+
+Examples include:
+
+/api/students
+/api/profiles
+/api/lessons
+/api/assessments
+/api/documents
+/api/documents/upload
+
+Interactive API documentation is available through:
+
+http://127.0.0.1:8000/docs
+🔐 Security and Privacy
+
+AI Teacher should follow secure development practices:
+
+Never expose API keys in frontend code
+Never commit .env files containing secrets
+Validate uploaded files
+Restrict file types and sizes
+Sanitize extracted content
+Protect student data
+Use authentication for production deployments
+Apply access control to learning profiles
+Avoid exposing private educational documents
+⚠️ Current Limitations
+
+The current prototype can be further improved in several areas.
+
+1. Real-Time Conversation
+
+A future version can provide more natural, low-latency conversational teaching.
+
+2. Emotion Awareness
+
+The system can be extended to detect learner engagement and frustration.
+
+3. AI Avatar Quality
+
+More advanced avatar and lip-sync technologies can improve realism.
+
+4. Subject-Specific Visuals
+
+Future versions can generate richer:
+
+Simulations
+Interactive diagrams
+Mathematical visualizations
+Code demonstrations
+5. Long-Term Memory
+
+A more advanced learner memory system can maintain deeper learning history.
+
+6. Multilingual Expansion
+
+Additional Indian and international languages can be supported.
+
+7. Large-Scale Deployment
+
+Production deployment would require:
+
+Scaling
+Caching
+Model optimization
+Monitoring
+Security hardening
+Cost optimization
+🚀 Future Scope
+
+Potential future capabilities include:
+
+🤝 Real-time conversational teaching
+👤 Multiple AI teacher personalities
+❤️ Emotion-aware interaction
+🧠 Long-term student memory
+📅 Automatic study planner
+📝 Exam preparation mode
+🔄 Revision mode
+🃏 Flashcard generation
+📓 Automatic notes
+🗺️ Concept maps
+💻 Interactive coding lessons
+📊 Learning analytics
+🏠 Offline/local AI models
+♿ Accessibility features
+🎨 Multiple AI teacher characters
+🧑‍🏫 Teacher dashboard
+👨‍👩‍👧 Parent progress dashboard
+🏫 Institutional deployment
+🏆 Alignment With Challenge Requirements
+
+AI Teacher is designed around the key requirements of the AI Teacher challenge:
+
+Requirement	AI Teacher
+Uploaded learning material	✅
+Topic-based teaching	✅
+AI-generated lesson structure	✅
+Personalized teaching	✅
+Human-like teaching	✅
+Video-based teaching	✅
+AI voice	✅
+AI avatar	✅
+Multilingual capability	✅
+Student questioning	✅
+Assessment	✅
+Adaptive response	✅
+Knowledge-gap detection	✅
+RAG knowledge grounding	✅
+Learning progress	✅
+Next-topic recommendation	✅
+🎯 Evaluation-Focused Innovation
+
+The solution focuses on the areas that matter most for an AI educator:
+
+              AI TEACHER
+                   │
+       ┌───────────┼───────────┐
+       │           │           │
+       ▼           ▼           ▼
+   PERSONALIZE   TEACH       ADAPT
+       │           │           │
+       └───────────┼───────────┘
+                   ▼
+              EVALUATE
+                   │
+                   ▼
+             FIND KNOWLEDGE
+                 GAPS
+                   │
+                   ▼
+              RE-TEACH
+                   │
+                   ▼
+              REASSESS
+
+The system therefore focuses on teaching intelligence, not simply text generation.
+
+💡 Why This Matters
+
+The world already has enormous amounts of educational content.
+
+The bigger challenge is:
+
+How do we turn that content into understanding for each individual learner?
+
+AI Teacher approaches this problem by creating an intelligent layer between:
+
+Educational Content
+        ↓
+       AI
+        ↓
+Personalized Teaching
+        ↓
+Student Interaction
+        ↓
+Assessment
+        ↓
+Adaptive Learning
+🌟 Vision
+
+Our vision is to move education from:
+
+One-Size-Fits-All
+
+to
+
+One-Teacher-for-Every-Learner
+
+From:
+
+CONTENT
+
+to:
+
+UNDERSTANDING
+
+From:
+
+PASSIVE LEARNING
+
+to:
+
+INTERACTIVE LEARNING
+
+From:
+
+GENERIC EXPLANATIONS
+
+to:
+
+PERSONALIZED TEACHING
+
+From:
+
+WRONG ANSWER
+
+to:
+
+DIAGNOSIS → RE-TEACHING → MASTERY
+❤️ Final Message
+Don't just give students answers.
+Give them a teacher.
+🤖 AI Teacher
+
+Understand. Explain. Interact. Adapt. Teach.
+
+👥 Team
+
+Project: AI Teacher
+Challenge: AI Innovation Hackathon 2026
+Category: AI / EdTech / Generative AI
+
+📜 Disclaimer
+
+AI Teacher is an educational technology prototype designed to demonstrate adaptive AI-powered teaching.
+
+AI-generated educational content should be reviewed for accuracy, especially for high-stakes academic, scientific, medical, legal, or professional applications.
+
+
+
